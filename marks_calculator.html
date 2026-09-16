@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MCQ Evaluator & Color-Coded Grading Tool</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- xlsx-js-style Library (SheetJS + Cell Style & Color Support) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen pb-12">
+
+  <!-- Header -->
+  <header class="bg-indigo-600 text-white py-6 px-8 shadow-md">
+    <div class="max-w-7xl mx-auto flex justify-between items-center">
+      <div>
+        <h1 class="text-2xl font-bold">MCQ Evaluator & Grading Tool</h1>
+        <p class="text-indigo-200 text-sm mt-1">Configure options count, negative/positive marks per question, evaluate multiple correct answers, and round totals.</p>
+      </div>
+      <div class="text-right text-xs text-indigo-200">
+        Standalone Browser App
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto mt-8 px-4 space-y-8">
+
+    <!-- Upload Card -->
+    <section class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+      <h2 class="text-lg font-semibold text-slate-800 mb-3">1. Upload Excel File</h2>
+      <div class="flex items-center justify-center w-full">
+        <label for="dropzone-file" class="flex flex-col items-center justify-center w-full h-36 border-2 border-indigo-300 border-dashed rounded-lg cursor-pointer bg-indigo-50/30 hover:bg-indigo-50 transition-colors">
+          <div class="flex flex-col items-center justify-center pt-5 pb-6">
+            <svg class="w-8 h-8 mb-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 0115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+            <p class="mb-1 text-sm text-slate-600 font-medium"><span class="text-indigo-600 font-semibold">Click to upload</span> or drag and drop</p>
+            <p class="text-xs text-slate-400">Excel files (.xlsx, .xls)</p>
+          </div>
+          <input id="dropzone-file" type="file" accept=".xlsx, .xls" class="hidden" onchange="handleFileUpload(event)" />
+        </label>
+      </div>
+      <div id="file-info" class="mt-3 text-sm text-slate-600 hidden">
+        Loaded File: <span id="file-name" class="font-semibold text-slate-800"></span> | Select Sheet: 
+        <select id="sheet-select" onchange="changeSheet()" class="border rounded px-2 py-0.5 text-sm font-semibold bg-white text-indigo-700"></select>
+      </div>
+    </section>
+
+    <!-- App Main Body -->
+    <div id="app-body" class="space-y-8 hidden">
+
+      <!-- Settings & Controls -->
+      <section class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
+        <div class="flex flex-wrap justify-between items-center gap-4 border-b pb-4">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800">2. Marking Rules & Answer Key</h2>
+            <p class="text-xs text-slate-500">Detected <span id="q-count-badge" class="font-bold text-indigo-600">0</span> Questions. Set Option counts and weights dynamically.</p>
+          </div>
+          <button onclick="exportUpdatedExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            Download Color-Coded Excel
+          </button>
+        </div>
+
+        <!-- Global Batch Rules -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Batch Apply +ve Score</label>
+            <div class="flex gap-2">
+              <input type="number" step="0.05" id="global-pos" value="1.0" class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"/>
+              <button onclick="applyBatchRule('pos')" class="bg-indigo-600 text-white px-3 py-1 text-xs rounded hover:bg-indigo-700">Apply</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Batch Apply -ve Penalty</label>
+            <div class="flex gap-2">
+              <input type="number" step="0.05" id="global-neg" value="-0.25" class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"/>
+              <button onclick="applyBatchRule('neg')" class="bg-indigo-600 text-white px-3 py-1 text-xs rounded hover:bg-indigo-700">Apply</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Unattempted Score</label>
+            <input type="number" step="0.05" id="global-unatt" value="0.0" onchange="calculateAndRenderPreview()" class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"/>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Round Total Marks</label>
+            <select id="global-round" onchange="calculateAndRenderPreview()" class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+              <option value="0">Exact (No Rounding)</option>
+              <option value="0.25">Nearest Quarter (0.25)</option>
+              <option value="0.5">Nearest Half (0.5)</option>
+              <option value="1">Nearest Whole (1.0)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Per Question Key Settings -->
+        <div class="overflow-x-auto max-h-[500px] border rounded-lg">
+          <table class="w-full text-left text-xs border-collapse min-w-max">
+            <thead class="sticky top-0 bg-slate-100 z-10 shadow-sm">
+              <tr id="key-settings-thead-tr" class="text-slate-700 font-semibold border-b">
+                <!-- Dynamically populated -->
+              </tr>
+            </thead>
+            <tbody id="key-settings-table" class="divide-y divide-slate-100 bg-white">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Marks Preview Table -->
+      <section class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-lg font-semibold text-slate-800">3. Calculated Marks Preview</h2>
+          <span class="text-xs text-slate-500">Showing <span id="student-count">0</span> Students</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse min-w-max">
+            <thead>
+              <tr class="bg-indigo-50 text-indigo-900 border-b">
+                <th class="p-2.5 whitespace-nowrap">Student ID / Email</th>
+                <th class="p-2.5 whitespace-nowrap">Name</th>
+                <th class="p-2.5 text-right font-bold text-sm whitespace-nowrap">Total Marks</th>
+                <th class="p-2.5 whitespace-nowrap">Per-Question Scores</th>
+              </tr>
+            </thead>
+            <tbody id="student-preview-table" class="divide-y divide-slate-100">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <script>
+    let rawWorkbook = null;
+    let rawRows = [];
+    let activeSheetName = '';
+    let totalScoreColIdx = 4; 
+    let questionsData = [];  
+    let studentsData = [];   
+    const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('');
+
+    function cleanFloat(num) {
+      return Math.round((num + Number.EPSILON) * 100) / 100;
+    }
+
+    function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      document.getElementById('file-name').innerText = file.name;
+      const reader = new FileReader();
+
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        rawWorkbook = XLSX.read(data, { type: 'array' });
+        
+        const select = document.getElementById('sheet-select');
+        select.innerHTML = '';
+        rawWorkbook.SheetNames.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s;
+          opt.innerText = s;
+          select.appendChild(opt);
+        });
+
+        if (rawWorkbook.SheetNames.includes('Final Marks')) {
+          select.value = 'Final Marks';
+        }
+
+        changeSheet();
+        document.getElementById('app-body').classList.remove('hidden');
+        document.getElementById('file-info').classList.remove('hidden');
+      };
+
+      reader.readAsArrayBuffer(file);
+    }
+
+    function changeSheet() {
+      activeSheetName = document.getElementById('sheet-select').value;
+      const sheet = rawWorkbook.Sheets[activeSheetName];
+      rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      parseExcelRows(rawRows);
+    }
+
+    function parseExcelRows(rows) {
+      questionsData = [];
+      studentsData = [];
+
+      if (!rows || rows.length === 0) return;
+
+      let qHeaderRowIdx = -1;
+      let ansKeyRowIdx = -1;
+      let labelRowIdx = -1;
+
+      for (let i = 0; i < Math.min(rows.length, 10); i++) {
+        const rowStr = rows[i].map(c => String(c)).join(' ');
+        if (qHeaderRowIdx === -1 && (rowStr.includes('Q1') || rowStr.includes('Q2'))) {
+          qHeaderRowIdx = i;
+        }
+        if (rowStr.includes('ANSWER KEY')) {
+          ansKeyRowIdx = i;
+        }
+        if (rowStr.includes('Marks') || rowStr.includes('Answer=')) {
+          labelRowIdx = i;
+        }
+      }
+
+      if (qHeaderRowIdx === -1) qHeaderRowIdx = 0;
+
+      const qRow = rows[qHeaderRowIdx];
+      const keyRow = ansKeyRowIdx !== -1 ? rows[ansKeyRowIdx] : null;
+      const labelRow = labelRowIdx !== -1 ? rows[labelRowIdx] : null;
+
+      totalScoreColIdx = 4;
+      qRow.forEach((c, idx) => {
+        const str = String(c).trim().toLowerCase();
+        if (str === 'total mcq' || str === 'pts' || str === 'raw' || str.includes('total')) {
+          totalScoreColIdx = idx;
+        }
+      });
+
+      qRow.forEach((cellVal, colIdx) => {
+        const strVal = String(cellVal).trim();
+        if (/^Q\d+$/i.test(strVal)) {
+          
+          let correctOpt = ['A'];
+          if (keyRow && keyRow[colIdx]) {
+            const rawKey = String(keyRow[colIdx]).trim().toUpperCase();
+            correctOpt = rawKey.match(/[A-Z]/g) || ['A']; 
+          }
+
+          let scoreColIdx = colIdx + 1; 
+          if (labelRow && labelRow[colIdx + 5] && String(labelRow[colIdx + 5]).trim().toLowerCase() === 'marks') {
+            scoreColIdx = colIdx + 5;
+          } else if (qRow[colIdx + 1] && String(qRow[colIdx + 1]).trim().toLowerCase().includes('pts')) {
+            scoreColIdx = colIdx + 1;
+          }
+
+          let optionsCount = 4;
+          correctOpt.forEach(c => {
+            let idx = ALPHABET.indexOf(c);
+            if (idx + 1 > optionsCount) optionsCount = idx + 1;
+          });
+
+          let qPos = cleanFloat(parseFloat(document.getElementById('global-pos').value) || 1.0);
+          let qNeg = cleanFloat(parseFloat(document.getElementById('global-neg').value) || -0.25);
+          let weights = {};
+
+          for(let i=0; i<optionsCount; i++){
+            let opt = ALPHABET[i];
+            weights[opt] = cleanFloat(correctOpt.includes(opt) ? qPos : qNeg);
+          }
+
+          questionsData.push({
+            id: strVal.toUpperCase(),
+            colIdx: colIdx,
+            scoreColIdx: scoreColIdx,
+            correct: correctOpt,
+            optionsCount: optionsCount,
+            qPos: qPos,
+            qNeg: qNeg,
+            weights: weights
+          });
+        }
+      });
+
+      const startStudentRowIdx = Math.max(qHeaderRowIdx, ansKeyRowIdx, labelRowIdx) + 1;
+
+      for (let i = startStudentRowIdx; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length === 0) continue;
+
+        const firstCell = String(row[0] || '').trim();
+        if (!firstCell || firstCell.includes('ANSWER KEY') || firstCell.includes('Item ID')) continue;
+
+        let studentId = row[0] || '';
+        let lastName = row[1] || '';
+        let firstName = row[2] || '';
+        let email = row[3] || studentId;
+        let name = `${firstName} ${lastName}`.trim();
+        if (name === '.') name = '';
+
+        let answers = {};
+        questionsData.forEach(q => {
+          let ansCell = String(row[q.colIdx] || '').trim().toUpperCase();
+          answers[q.id] = [...new Set(ansCell.match(/[A-Z]/g) || [])];
+        });
+
+        studentsData.push({
+          rowIndex: i,
+          studentId,
+          name,
+          email,
+          answers
+        });
+      }
+
+      document.getElementById('q-count-badge').innerText = questionsData.length;
+      document.getElementById('student-count').innerText = studentsData.length;
+
+      renderKeySettings();
+      calculateAndRenderPreview();
+    }
+
+    function applyBatchRule(type) {
+      if (type === 'pos') {
+        const val = cleanFloat(parseFloat(document.getElementById('global-pos').value) || 1.0);
+        questionsData.forEach(q => {
+          q.qPos = val;
+          q.correct.forEach(opt => {
+            if(q.weights[opt] !== undefined) q.weights[opt] = val;
+          });
+        });
+      } else if (type === 'neg') {
+        const val = cleanFloat(parseFloat(document.getElementById('global-neg').value) || -0.25);
+        questionsData.forEach(q => {
+          q.qNeg = val;
+          for(let i=0; i<q.optionsCount; i++){
+            let opt = ALPHABET[i];
+            if (!q.correct.includes(opt)) q.weights[opt] = val;
+          }
+        });
+      }
+      renderKeySettings();
+      calculateAndRenderPreview();
+    }
+
+    function updateQuestionKey(qIndex, field, value) {
+      const q = questionsData[qIndex];
+      
+      if (field === 'correct') {
+        const newCorrect = [...new Set(value.toUpperCase().match(/[A-Z]/g) || [])];
+        if (newCorrect.length > 0) q.correct = newCorrect;
+      } else if (field === 'optionsCount') {
+        q.optionsCount = parseInt(value) || 4;
+      } else if (field === 'qPos') {
+        q.qPos = cleanFloat(parseFloat(value) || 0);
+      } else if (field === 'qNeg') {
+        q.qNeg = cleanFloat(parseFloat(value) || 0);
+      } else if (field.startsWith('weight_')) {
+        const opt = field.split('_')[1];
+        q.weights[opt] = cleanFloat(parseFloat(value) || 0);
+        renderKeySettings();
+        calculateAndRenderPreview();
+        return; 
+      }
+
+      if (field !== 'weight_') {
+        q.correct.forEach(c => {
+          let idx = ALPHABET.indexOf(c);
+          if (idx + 1 > q.optionsCount) q.optionsCount = idx + 1;
+        });
+
+        q.weights = {};
+        for(let i=0; i<q.optionsCount; i++) {
+           let opt = ALPHABET[i];
+           q.weights[opt] = cleanFloat(q.correct.includes(opt) ? q.qPos : q.qNeg);
+        }
+      }
+
+      renderKeySettings();
+      calculateAndRenderPreview();
+    }
+
+    function renderKeySettings() {
+      const tbody = document.getElementById('key-settings-table');
+      const theadTr = document.getElementById('key-settings-thead-tr');
+      tbody.innerHTML = '';
+
+      let maxCount = 2; 
+      questionsData.forEach(q => { if(q.optionsCount > maxCount) maxCount = q.optionsCount; });
+
+      let headerHTML = `
+        <th class="p-2.5 whitespace-nowrap">Q#</th>
+        <th class="p-2.5 whitespace-nowrap">Correct Answer(s)</th>
+        <th class="p-2.5 text-center bg-slate-200 whitespace-nowrap" title="Number of Choices"># Options</th>
+        <th class="p-2.5 text-center bg-emerald-100 whitespace-nowrap">+ve Mark</th>
+        <th class="p-2.5 text-center bg-red-100 whitespace-nowrap">-ve Mark</th>
+      `;
+      for(let i=0; i<maxCount; i++){
+        headerHTML += `<th class="p-2.5 text-center border-l bg-slate-50 min-w-[70px]">Weight ${ALPHABET[i]}</th>`;
+      }
+      theadTr.innerHTML = headerHTML;
+
+      questionsData.forEach((q, idx) => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-slate-50 transition-colors";
+
+        let optsHTML = '';
+        for(let i=0; i<maxCount; i++){
+            let opt = ALPHABET[i];
+            if (i < q.optionsCount) {
+                optsHTML += `
+                  <td class="p-2 text-center border-l max-w-[80px]">
+                    <input type="number" step="0.01" value="${q.weights[opt]}" 
+                           onchange="updateQuestionKey(${idx}, 'weight_${opt}', this.value)"
+                           class="w-16 border rounded text-center py-1 font-mono text-xs ${q.correct.includes(opt) ? 'font-bold bg-emerald-100 text-emerald-800 border-emerald-400' : 'bg-red-50 text-red-700 border-red-200'}"/>
+                  </td>
+                `;
+            } else {
+                optsHTML += `<td class="p-2 border-l bg-slate-50"></td>`;
+            }
+        }
+
+        tr.innerHTML = `
+          <td class="p-2.5 font-bold text-slate-700 whitespace-nowrap">${q.id}</td>
+          <td class="p-2.5 whitespace-nowrap">
+            <input type="text" value="${q.correct.join(',')}" 
+                   onchange="updateQuestionKey(${idx}, 'correct', this.value)" 
+                   class="border rounded w-20 px-2 py-1 bg-white font-semibold text-indigo-600 focus:ring-2 focus:ring-indigo-400 outline-none" 
+                   placeholder="A,C"/>
+          </td>
+          <td class="p-2.5 text-center bg-slate-50 whitespace-nowrap">
+            <input type="number" min="2" max="26" value="${q.optionsCount}" 
+                   onchange="updateQuestionKey(${idx}, 'optionsCount', this.value)" 
+                   class="border rounded w-14 px-1 py-1 text-center bg-white outline-none font-semibold"/>
+          </td>
+          <td class="p-2.5 text-center bg-emerald-50/30 whitespace-nowrap">
+            <input type="number" step="0.01" value="${q.qPos}" 
+                   onchange="updateQuestionKey(${idx}, 'qPos', this.value)" 
+                   class="border rounded w-16 px-1 py-1 text-center bg-white text-emerald-700 outline-none"/>
+          </td>
+          <td class="p-2.5 text-center bg-red-50/30 whitespace-nowrap">
+            <input type="number" step="0.01" value="${q.qNeg}" 
+                   onchange="updateQuestionKey(${idx}, 'qNeg', this.value)" 
+                   class="border rounded w-16 px-1 py-1 text-center bg-white text-red-700 outline-none"/>
+          </td>
+          ${optsHTML}
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function calculateAndRenderPreview() {
+      const unattScore = cleanFloat(parseFloat(document.getElementById('global-unatt').value) || 0);
+      const roundVal = parseFloat(document.getElementById('global-round').value) || 0;
+      const tbody = document.getElementById('student-preview-table');
+      tbody.innerHTML = '';
+
+      studentsData.forEach(student => {
+        let totalScore = 0;
+        let qScoreHTML = '';
+
+        questionsData.forEach(q => {
+          const studentOpts = student.answers[q.id];
+          let score = 0;
+
+          if (!studentOpts || studentOpts.length === 0) {
+            score = unattScore;
+          } else {
+            studentOpts.forEach(opt => {
+              score += (q.weights[opt] !== undefined ? q.weights[opt] : 0);
+            });
+          }
+
+          score = cleanFloat(score);
+          totalScore += score;
+          const isPos = score > 0;
+          const isNeg = score < 0;
+
+          const formattedScoreStr = isPos ? '+' + score.toFixed(2) : score.toFixed(2);
+
+          qScoreHTML += `
+            <td class="p-1.5 text-center font-mono text-xs border-r border-slate-100 min-w-[55px] max-w-[70px] overflow-hidden ${isPos ? 'text-emerald-700 font-semibold bg-emerald-50' : isNeg ? 'text-red-600 bg-red-50' : 'text-slate-400'}">
+              <span class="block text-[10px] text-slate-400 truncate max-w-[60px] mx-auto" title="${studentOpts.join(',') || '-'}">${studentOpts.join(',') || '-'}</span>
+              <span class="block text-xs font-mono font-medium">${formattedScoreStr}</span>
+            </td>
+          `;
+        });
+
+        totalScore = cleanFloat(totalScore);
+
+        if (roundVal > 0) {
+          totalScore = cleanFloat(Math.round(totalScore / roundVal) * roundVal);
+        }
+
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-slate-50 transition-colors";
+        tr.innerHTML = `
+          <td class="p-2.5 font-mono text-slate-600 whitespace-nowrap">${student.email}</td>
+          <td class="p-2.5 font-medium text-slate-800 whitespace-nowrap">${student.name || '-'}</td>
+          <td class="p-2.5 text-right font-bold text-indigo-600 text-sm whitespace-nowrap">${totalScore.toFixed(2)}</td>
+          <td class="p-0">
+            <div class="flex overflow-x-auto">
+              <table class="border-collapse">
+                <tr>${qScoreHTML}</tr>
+              </table>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function exportUpdatedExcel() {
+      const unattScore = cleanFloat(parseFloat(document.getElementById('global-unatt').value) || 0);
+      const roundVal = parseFloat(document.getElementById('global-round').value) || 0;
+      let updatedRows = JSON.parse(JSON.stringify(rawRows));
+
+      studentsData.forEach(student => {
+        let rIdx = student.rowIndex;
+        let totalScore = 0;
+
+        questionsData.forEach(q => {
+          const studentOpts = student.answers[q.id];
+          let score = 0;
+          
+          if (!studentOpts || studentOpts.length === 0) {
+            score = unattScore;
+          } else {
+            studentOpts.forEach(opt => {
+              score += (q.weights[opt] !== undefined ? q.weights[opt] : 0);
+            });
+          }
+          
+          score = cleanFloat(score);
+          totalScore += score;
+          if (updatedRows[rIdx]) updatedRows[rIdx][q.scoreColIdx] = score;
+        });
+
+        totalScore = cleanFloat(totalScore);
+
+        if (roundVal > 0) {
+          totalScore = cleanFloat(Math.round(totalScore / roundVal) * roundVal);
+        }
+
+        if (updatedRows[rIdx]) updatedRows[rIdx][totalScoreColIdx] = totalScore;
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(updatedRows);
+      const posStyle = { fill: { fgColor: { rgb: "E6F4EA" } }, font: { color: { rgb: "137333" }, bold: true }, alignment: { horizontal: "center" } };
+      const negStyle = { fill: { fgColor: { rgb: "FCE8E6" } }, font: { color: { rgb: "C5221F" }, bold: true }, alignment: { horizontal: "center" } };
+      const unattStyle = { fill: { fgColor: { rgb: "F1F3F4" } }, font: { color: { rgb: "5F6368" } }, alignment: { horizontal: "center" } };
+      const totalStyle = { fill: { fgColor: { rgb: "E8EAF6" } }, font: { color: { rgb: "1A237E" }, bold: true }, alignment: { horizontal: "right" } };
+
+      studentsData.forEach(student => {
+        let rIdx = student.rowIndex;
+        let totalCellRef = XLSX.utils.encode_cell({ r: rIdx, c: totalScoreColIdx });
+        if (ws[totalCellRef]) ws[totalCellRef].s = totalStyle;
+
+        questionsData.forEach(q => {
+          let scoreCellRef = XLSX.utils.encode_cell({ r: rIdx, c: q.scoreColIdx });
+          if (ws[scoreCellRef]) {
+            let val = parseFloat(ws[scoreCellRef].v);
+            if (!isNaN(val)) {
+              if (val > 0) ws[scoreCellRef].s = posStyle;
+              else if (val < 0) ws[scoreCellRef].s = negStyle;
+              else ws[scoreCellRef].s = unattStyle;
+            }
+          }
+        });
+      });
+
+      rawWorkbook.Sheets[activeSheetName] = ws;
+      XLSX.writeFile(rawWorkbook, `Evaluated_ColorCoded_${activeSheetName}.xlsx`);
+    }
+  </script>
+</body>
+</html>
