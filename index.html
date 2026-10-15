@@ -28,19 +28,19 @@
 
     <!-- Upload Card -->
     <section class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-      <h2 class="text-lg font-semibold text-slate-800 mb-3">1. Upload Excel File</h2>
+      <h2 class="text-lg font-semibold text-slate-800 mb-3">1. Upload Excel or CSV File</h2>
       <div class="flex items-center justify-center w-full">
         <label for="dropzone-file" class="flex flex-col items-center justify-center w-full h-36 border-2 border-indigo-300 border-dashed rounded-lg cursor-pointer bg-indigo-50/30 hover:bg-indigo-50 transition-colors">
           <div class="flex flex-col items-center justify-center pt-5 pb-6">
             <svg class="w-8 h-8 mb-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 0115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
             <p class="mb-1 text-sm text-slate-600 font-medium"><span class="text-indigo-600 font-semibold">Click to upload</span> or drag and drop</p>
-            <p class="text-xs text-slate-400">Excel files (.xlsx, .xls)</p>
+            <p class="text-xs text-slate-400">Excel files (.xlsx, .xls) or CSV files (.csv)</p>
           </div>
-          <input id="dropzone-file" type="file" accept=".xlsx, .xls" class="hidden" onchange="handleFileUpload(event)" />
+          <input id="dropzone-file" type="file" accept=".xlsx, .xls, .csv" class="hidden" onchange="handleFileUpload(event)" />
         </label>
       </div>
       <div id="file-info" class="mt-3 text-sm text-slate-600 hidden">
-        Loaded File: <span id="file-name" class="font-semibold text-slate-800"></span> | Select Sheet: 
+        Loaded File: <span id="file-name" class="font-semibold text-slate-800"></span> | Select Sheet:
         <select id="sheet-select" onchange="changeSheet()" class="border rounded px-2 py-0.5 text-sm font-semibold bg-white text-indigo-700"></select>
       </div>
     </section>
@@ -136,10 +136,11 @@
   <script>
     let rawWorkbook = null;
     let rawRows = [];
+    let uploadedFileName = '';
     let activeSheetName = '';
-    let totalScoreColIdx = 4; 
-    let questionsData = [];  
-    let studentsData = [];   
+    let totalScoreColIdx = 4;
+    let questionsData = [];
+    let studentsData = [];
     const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('');
 
     function cleanFloat(num) {
@@ -150,13 +151,20 @@
       const file = event.target.files[0];
       if (!file) return;
 
+      uploadedFileName = file.name;
       document.getElementById('file-name').innerText = file.name;
       const reader = new FileReader();
 
       reader.onload = function(e) {
-        const data = new Uint8Array(e.target.result);
-        rawWorkbook = XLSX.read(data, { type: 'array' });
-        
+        const isCsv = file.name.toLowerCase().endsWith('.csv');
+        if (isCsv) {
+          const text = new TextDecoder().decode(e.target.result);
+          rawWorkbook = XLSX.read(text, { type: 'string' });
+        } else {
+          const data = new Uint8Array(e.target.result);
+          rawWorkbook = XLSX.read(data, { type: 'array' });
+        }
+
         const select = document.getElementById('sheet-select');
         select.innerHTML = '';
         rawWorkbook.SheetNames.forEach(s => {
@@ -166,7 +174,9 @@
           select.appendChild(opt);
         });
 
-        if (rawWorkbook.SheetNames.includes('Final Marks')) {
+        if (rawWorkbook.SheetNames.length > 1) {
+          select.value = rawWorkbook.SheetNames[1];
+        } else if (rawWorkbook.SheetNames.includes('Final Marks')) {
           select.value = 'Final Marks';
         }
 
@@ -213,6 +223,7 @@
       const qRow = rows[qHeaderRowIdx];
       const keyRow = ansKeyRowIdx !== -1 ? rows[ansKeyRowIdx] : null;
       const labelRow = labelRowIdx !== -1 ? rows[labelRowIdx] : null;
+      const itemRow = rows.find(r => String(r[0]).includes('Item ID')) || null;
 
       totalScoreColIdx = 4;
       qRow.forEach((c, idx) => {
@@ -225,14 +236,16 @@
       qRow.forEach((cellVal, colIdx) => {
         const strVal = String(cellVal).trim();
         if (/^Q\d+$/i.test(strVal)) {
-          
+
           let correctOpt = ['A'];
           if (keyRow && keyRow[colIdx]) {
             const rawKey = String(keyRow[colIdx]).trim().toUpperCase();
-            correctOpt = rawKey.match(/[A-Z]/g) || ['A']; 
+            correctOpt = rawKey.match(/[A-Z]/g) || ['A'];
           }
 
-          let scoreColIdx = colIdx + 1; 
+          let itemId = itemRow && itemRow[colIdx] ? itemRow[colIdx] : '';
+
+          let scoreColIdx = colIdx + 1;
           if (labelRow && labelRow[colIdx + 5] && String(labelRow[colIdx + 5]).trim().toLowerCase() === 'marks') {
             scoreColIdx = colIdx + 5;
           } else if (qRow[colIdx + 1] && String(qRow[colIdx + 1]).trim().toLowerCase().includes('pts')) {
@@ -256,6 +269,7 @@
 
           questionsData.push({
             id: strVal.toUpperCase(),
+            itemId: itemId,
             colIdx: colIdx,
             scoreColIdx: scoreColIdx,
             correct: correctOpt,
@@ -292,8 +306,10 @@
         studentsData.push({
           rowIndex: i,
           studentId,
-          name,
+          lastName,
+          firstName,
           email,
+          name,
           answers
         });
       }
@@ -330,7 +346,7 @@
 
     function updateQuestionKey(qIndex, field, value) {
       const q = questionsData[qIndex];
-      
+
       if (field === 'correct') {
         const newCorrect = [...new Set(value.toUpperCase().match(/[A-Z]/g) || [])];
         if (newCorrect.length > 0) q.correct = newCorrect;
@@ -345,7 +361,7 @@
         q.weights[opt] = cleanFloat(parseFloat(value) || 0);
         renderKeySettings();
         calculateAndRenderPreview();
-        return; 
+        return;
       }
 
       if (field !== 'weight_') {
@@ -370,7 +386,7 @@
       const theadTr = document.getElementById('key-settings-thead-tr');
       tbody.innerHTML = '';
 
-      let maxCount = 2; 
+      let maxCount = 2;
       questionsData.forEach(q => { if(q.optionsCount > maxCount) maxCount = q.optionsCount; });
 
       let headerHTML = `
@@ -395,7 +411,7 @@
             if (i < q.optionsCount) {
                 optsHTML += `
                   <td class="p-2 text-center border-l max-w-[80px]">
-                    <input type="number" step="0.01" value="${q.weights[opt]}" 
+                    <input type="number" step="0.01" value="${q.weights[opt]}"
                            onchange="updateQuestionKey(${idx}, 'weight_${opt}', this.value)"
                            class="w-16 border rounded text-center py-1 font-mono text-xs ${q.correct.includes(opt) ? 'font-bold bg-emerald-100 text-emerald-800 border-emerald-400' : 'bg-red-50 text-red-700 border-red-200'}"/>
                   </td>
@@ -408,24 +424,24 @@
         tr.innerHTML = `
           <td class="p-2.5 font-bold text-slate-700 whitespace-nowrap">${q.id}</td>
           <td class="p-2.5 whitespace-nowrap">
-            <input type="text" value="${q.correct.join(',')}" 
-                   onchange="updateQuestionKey(${idx}, 'correct', this.value)" 
-                   class="border rounded w-20 px-2 py-1 bg-white font-semibold text-indigo-600 focus:ring-2 focus:ring-indigo-400 outline-none" 
+            <input type="text" value="${q.correct.join(',')}"
+                   onchange="updateQuestionKey(${idx}, 'correct', this.value)"
+                   class="border rounded w-20 px-2 py-1 bg-white font-semibold text-indigo-600 focus:ring-2 focus:ring-indigo-400 outline-none"
                    placeholder="A,C"/>
           </td>
           <td class="p-2.5 text-center bg-slate-50 whitespace-nowrap">
-            <input type="number" min="2" max="26" value="${q.optionsCount}" 
-                   onchange="updateQuestionKey(${idx}, 'optionsCount', this.value)" 
+            <input type="number" min="2" max="26" value="${q.optionsCount}"
+                   onchange="updateQuestionKey(${idx}, 'optionsCount', this.value)"
                    class="border rounded w-14 px-1 py-1 text-center bg-white outline-none font-semibold"/>
           </td>
           <td class="p-2.5 text-center bg-emerald-50/30 whitespace-nowrap">
-            <input type="number" step="0.01" value="${q.qPos}" 
-                   onchange="updateQuestionKey(${idx}, 'qPos', this.value)" 
+            <input type="number" step="0.01" value="${q.qPos}"
+                   onchange="updateQuestionKey(${idx}, 'qPos', this.value)"
                    class="border rounded w-16 px-1 py-1 text-center bg-white text-emerald-700 outline-none"/>
           </td>
           <td class="p-2.5 text-center bg-red-50/30 whitespace-nowrap">
-            <input type="number" step="0.01" value="${q.qNeg}" 
-                   onchange="updateQuestionKey(${idx}, 'qNeg', this.value)" 
+            <input type="number" step="0.01" value="${q.qNeg}"
+                   onchange="updateQuestionKey(${idx}, 'qNeg', this.value)"
                    class="border rounded w-16 px-1 py-1 text-center bg-white text-red-700 outline-none"/>
           </td>
           ${optsHTML}
@@ -495,67 +511,254 @@
       });
     }
 
-    function exportUpdatedExcel() {
+    function generateTemplateFormattedSheet() {
       const unattScore = cleanFloat(parseFloat(document.getElementById('global-unatt').value) || 0);
-      const roundVal = parseFloat(document.getElementById('global-round').value) || 0;
-      let updatedRows = JSON.parse(JSON.stringify(rawRows));
 
-      studentsData.forEach(student => {
-        let rIdx = student.rowIndex;
-        let totalScore = 0;
+      let maxOpts = 4;
+      questionsData.forEach(q => { if(q.optionsCount > maxOpts) maxOpts = q.optionsCount; });
 
-        questionsData.forEach(q => {
-          const studentOpts = student.answers[q.id];
-          let score = 0;
-          
-          if (!studentOpts || studentOpts.length === 0) {
-            score = unattScore;
-          } else {
-            studentOpts.forEach(opt => {
-              score += (q.weights[opt] !== undefined ? q.weights[opt] : 0);
-            });
+      let row1 = ['StudentID', 'Last Name', 'First Name', 'Email', 'Total MCQ'];
+      let row2 = ['ANSWER KEY -->', '', '', '', ''];
+      let row3 = ['Item ID / Rev', '', '', 'Email', 'Total MCQ Marks = '];
+
+      let yellowCells = [];
+      let greyCells = [];
+      let blueCells = [];
+      let colMapping = [];
+      let studentStartRow = 4;
+      let studentEndRow = studentStartRow + studentsData.length - 1;
+
+      questionsData.forEach((q, qIdx) => {
+        let startCol = row1.length;
+        row1.push(q.id);
+        row2.push(''); // Blank cell in Row 2 under Q column
+        row3.push(q.itemId || `${21144 + qIdx} / 2`);
+
+        let optCols = {};
+        for (let i = 0; i < maxOpts; i++) {
+          let optChar = ALPHABET[i];
+          let colIdx = row1.length;
+          let weightVal = q.weights[optChar] !== undefined ? q.weights[optChar] : 0;
+          let optColLetter = XLSX.utils.encode_col(colIdx);
+
+          // Row 1 Formula: =COUNTIF(G4:G13, "1")
+          row1.push({ f: `COUNTIF(${optColLetter}${studentStartRow}:${optColLetter}${studentEndRow},1)` });
+          greyCells.push({ r: 0, c: colIdx }); // Row 1 option count background
+
+          row2.push(weightVal);
+          row3.push(`Answer=${optChar}`);
+          blueCells.push({ r: 2, c: colIdx }); // Row 3 answer label background
+          optCols[optChar] = colIdx;
+
+          if (q.correct.includes(optChar)) {
+            yellowCells.push({ r: 1, c: colIdx }); // Row 2 correct option weight background
           }
-          
-          score = cleanFloat(score);
-          totalScore += score;
-          if (updatedRows[rIdx]) updatedRows[rIdx][q.scoreColIdx] = score;
-        });
-
-        totalScore = cleanFloat(totalScore);
-
-        if (roundVal > 0) {
-          totalScore = cleanFloat(Math.round(totalScore / roundVal) * roundVal);
         }
 
-        if (updatedRows[rIdx]) updatedRows[rIdx][totalScoreColIdx] = totalScore;
+        row1.push('');
+        row2.push(''); // Clean unlabelled cell in Row 2
+        row3.push('Marks');
+
+        let scoreCol = startCol + maxOpts + 1;
+        blueCells.push({ r: 2, c: scoreCol }); // Marks header highlighted in blue in Row 3
+
+        colMapping.push({
+          qId: q.id,
+          qAnsCol: startCol,
+          optCols: optCols,
+          scoreCol: scoreCol
+        });
       });
 
-      const ws = XLSX.utils.aoa_to_sheet(updatedRows);
+      let templateRows = [row1, row2, row3];
+      let maxTotalPossible = questionsData.length * (questionsData[0]?.qPos || 1);
+      row3[4] = `Total MCQ Marks = ${maxTotalPossible}`;
+
+      let studentRowInfo = [];
+
+      studentsData.forEach((student, sIdx) => {
+        let excelRowNumber = sIdx + 4; // Excel row 4 onwards
+        let r = [student.studentId, student.lastName, student.firstName, student.email];
+
+        let scoreCellRefs = [];
+        let questionScoresInfo = [];
+
+        colMapping.forEach((colInfo, qIdx) => {
+          let q = questionsData[qIdx];
+          let studentOpts = student.answers[q.id] || [];
+
+          let qAnsColLetter = XLSX.utils.encode_col(colInfo.qAnsCol);
+          let studentAnsRef = `${qAnsColLetter}${excelRowNumber}`;
+
+          let firstOptCol = XLSX.utils.encode_col(colInfo.optCols['A']);
+          let lastOptCol = XLSX.utils.encode_col(colInfo.optCols[ALPHABET[maxOpts - 1]]);
+
+          let studentOptRangeRef = `${firstOptCol}${excelRowNumber}:${lastOptCol}${excelRowNumber}`;
+          let weightRangeRef = `$${firstOptCol}$2:$${lastOptCol}$2`;
+
+          while (r.length < colInfo.qAnsCol) r.push('');
+          r[colInfo.qAnsCol] = studentOpts.join(',');
+
+          let scoreVal = 0;
+          if (!studentOpts || studentOpts.length === 0) {
+            scoreVal = unattScore;
+          } else {
+            studentOpts.forEach(opt => scoreVal += (q.weights[opt] !== undefined ? q.weights[opt] : 0));
+          }
+          scoreVal = cleanFloat(scoreVal);
+
+          for (let i = 0; i < maxOpts; i++) {
+            let optChar = ALPHABET[i];
+            let col = colInfo.optCols[optChar];
+            while (r.length < col) r.push('');
+
+            // Formula for Option column: =IF(ISNUMBER(SEARCH("A", F4)), 1, 0)
+            r[col] = { f: `IF(ISNUMBER(SEARCH("${optChar}",${studentAnsRef})),1,0)` };
+          }
+
+          while (r.length < colInfo.scoreCol) r.push('');
+          // Formula for Question Score column: =SUMPRODUCT(G4:J4, $G$2:$J$2)
+          r[colInfo.scoreCol] = { f: `SUMPRODUCT(${studentOptRangeRef},${weightRangeRef})` };
+
+          scoreCellRefs.push(`${XLSX.utils.encode_col(colInfo.scoreCol)}${excelRowNumber}`);
+          questionScoresInfo.push({ cIdx: colInfo.scoreCol, val: scoreVal });
+        });
+
+        // Formula for Total Score column (E): =K4+Q4+W4...
+        let totalFormula = scoreCellRefs.join('+');
+        r[4] = { f: totalFormula };
+
+        templateRows.push(r);
+
+        studentRowInfo.push({
+          rowIndex: templateRows.length - 1,
+          totalScoreCol: 4,
+          questionScoresInfo: questionScoresInfo
+        });
+      });
+
+      return { rows: templateRows, studentRowInfo, yellowCells, greyCells, blueCells };
+    }
+
+    function exportUpdatedExcel() {
+      const unattScore = cleanFloat(parseFloat(document.getElementById('global-unatt').value) || 0);
+
       const posStyle = { fill: { fgColor: { rgb: "E6F4EA" } }, font: { color: { rgb: "137333" }, bold: true }, alignment: { horizontal: "center" } };
       const negStyle = { fill: { fgColor: { rgb: "FCE8E6" } }, font: { color: { rgb: "C5221F" }, bold: true }, alignment: { horizontal: "center" } };
       const unattStyle = { fill: { fgColor: { rgb: "F1F3F4" } }, font: { color: { rgb: "5F6368" } }, alignment: { horizontal: "center" } };
       const totalStyle = { fill: { fgColor: { rgb: "E8EAF6" } }, font: { color: { rgb: "1A237E" }, bold: true }, alignment: { horizontal: "right" } };
 
+      const yellowRedBoldStyle = { fill: { fgColor: { rgb: "FFFF00" } }, font: { color: { rgb: "FF0000" }, bold: true }, alignment: { horizontal: "center" } };
+      const greyHeaderStyle = { fill: { fgColor: { rgb: "D9D9D9" } }, font: { bold: true }, alignment: { horizontal: "center" } };
+      const blueHeaderStyle = { fill: { fgColor: { rgb: "DCE6F1" } }, font: { bold: true }, alignment: { horizontal: "center" } };
+
+      // 1. Prepare Sheet 1: Template Format Sheet
+      const templateData = generateTemplateFormattedSheet();
+      const wsTemplate = XLSX.utils.aoa_to_sheet(templateData.rows);
+
+      // Total MCQ Header Cells (E1, E3) with Yellow Fill & Red Bold Text
+      ['E1', 'E3'].forEach(cellRef => {
+        if (wsTemplate[cellRef]) wsTemplate[cellRef].s = yellowRedBoldStyle;
+      });
+
+      // Apply Yellow background + Red Bold Text for correct answer weights in Row 2
+      templateData.yellowCells.forEach(cellPos => {
+        let cellRef = XLSX.utils.encode_cell(cellPos);
+        if (wsTemplate[cellRef]) wsTemplate[cellRef].s = yellowRedBoldStyle;
+      });
+
+      // Apply Grey background to Row 1 option count cells
+      templateData.greyCells.forEach(cellPos => {
+        let cellRef = XLSX.utils.encode_cell(cellPos);
+        if (wsTemplate[cellRef]) wsTemplate[cellRef].s = greyHeaderStyle;
+      });
+
+      // Apply Blue background to Row 3 option labels & Marks headers
+      templateData.blueCells.forEach(cellPos => {
+        let cellRef = XLSX.utils.encode_cell(cellPos);
+        if (wsTemplate[cellRef]) wsTemplate[cellRef].s = blueHeaderStyle;
+      });
+
+      // Apply Red / Green / Unatt color styles to calculated question score cells in Template sheet
+      templateData.studentRowInfo.forEach(info => {
+        let rIdx = info.rowIndex;
+        let totalCellRef = XLSX.utils.encode_cell({ r: rIdx, c: info.totalScoreCol });
+        if (wsTemplate[totalCellRef]) wsTemplate[totalCellRef].s = totalStyle;
+
+        info.questionScoresInfo.forEach(qInfo => {
+          let scoreCellRef = XLSX.utils.encode_cell({ r: rIdx, c: qInfo.cIdx });
+          if (wsTemplate[scoreCellRef]) {
+            if (qInfo.val > 0) wsTemplate[scoreCellRef].s = posStyle;
+            else if (qInfo.val < 0) wsTemplate[scoreCellRef].s = negStyle;
+            else wsTemplate[scoreCellRef].s = unattStyle;
+          }
+        });
+      });
+
+      // 2. Prepare Sheet 2: Evaluated Marks Sheet (With Formulas and Color Coding)
+      let evaluatedRows = JSON.parse(JSON.stringify(rawRows));
+      studentsData.forEach((student, sIdx) => {
+        let rIdx = student.rowIndex;
+        let excelRowNumber = rIdx + 1;
+        let scoreCellRefs = [];
+
+        questionsData.forEach(q => {
+          const studentOpts = student.answers[q.id];
+          let score = 0;
+          if (!studentOpts || studentOpts.length === 0) score = unattScore;
+          else studentOpts.forEach(opt => score += (q.weights[opt] !== undefined ? q.weights[opt] : 0));
+
+          score = cleanFloat(score);
+          if (evaluatedRows[rIdx]) evaluatedRows[rIdx][q.scoreColIdx] = score;
+
+          scoreCellRefs.push(`${XLSX.utils.encode_col(q.scoreColIdx)}${excelRowNumber}`);
+        });
+
+        // Insert Excel formula for total score column
+        if (evaluatedRows[rIdx]) {
+          evaluatedRows[rIdx][totalScoreColIdx] = { f: scoreCellRefs.join('+') };
+        }
+      });
+
+      const wsEvaluated = XLSX.utils.aoa_to_sheet(evaluatedRows);
+
       studentsData.forEach(student => {
         let rIdx = student.rowIndex;
         let totalCellRef = XLSX.utils.encode_cell({ r: rIdx, c: totalScoreColIdx });
-        if (ws[totalCellRef]) ws[totalCellRef].s = totalStyle;
+        if (wsEvaluated[totalCellRef]) wsEvaluated[totalCellRef].s = totalStyle;
 
         questionsData.forEach(q => {
           let scoreCellRef = XLSX.utils.encode_cell({ r: rIdx, c: q.scoreColIdx });
-          if (ws[scoreCellRef]) {
-            let val = parseFloat(ws[scoreCellRef].v);
+          if (wsEvaluated[scoreCellRef]) {
+            let val = parseFloat(wsEvaluated[scoreCellRef].v);
             if (!isNaN(val)) {
-              if (val > 0) ws[scoreCellRef].s = posStyle;
-              else if (val < 0) ws[scoreCellRef].s = negStyle;
-              else ws[scoreCellRef].s = unattStyle;
+              if (val > 0) wsEvaluated[scoreCellRef].s = posStyle;
+              else if (val < 0) wsEvaluated[scoreCellRef].s = negStyle;
+              else wsEvaluated[scoreCellRef].s = unattStyle;
+            } else {
+              wsEvaluated[scoreCellRef].s = posStyle;
             }
           }
         });
       });
 
-      rawWorkbook.Sheets[activeSheetName] = ws;
-      XLSX.writeFile(rawWorkbook, `Evaluated_ColorCoded_${activeSheetName}.xlsx`);
+      // 3. Construct Final Multi-Sheet Workbook & Clean Filename
+      const newWb = XLSX.utils.book_new();
+
+      // Sheet 1: Final Marks (New Template Format)
+      XLSX.utils.book_append_sheet(newWb, wsTemplate, `Final Marks (Template)`);
+
+      // Sheet 2: Evaluated Marks Sheet
+      XLSX.utils.book_append_sheet(newWb, wsEvaluated, `Evaluated Marks`);
+
+      // Sheet 3: Original Sheet
+      const rawSheet = rawWorkbook.Sheets[activeSheetName];
+      XLSX.utils.book_append_sheet(newWb, rawSheet, `Original`);
+
+      // Strip file extension to preserve full base name
+      let baseFileName = uploadedFileName ? uploadedFileName.replace(/\.[^/.]+$/, "") : activeSheetName;
+
+      XLSX.writeFile(newWb, `Evaluated_MultiSheet_${baseFileName}.xlsx`);
     }
   </script>
 </body>
