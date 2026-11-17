@@ -156,9 +156,12 @@
     let rawWorkbook = null;
     let rawRows = [];
     let activeSheetName = '';
-    let totalScoreColIdx = 4; 
-    let questionsData = [];  
-    let studentsData = [];   
+    let qHeaderRowIdx = 0;
+    let ansKeyRowIdx = -1;
+    let totalScoreColIdx = -1;
+    let isNewTotalCol = false;
+    let questionsData = [];
+    let studentsData = [];
     const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('');
 
     function cleanFloat(num) {
@@ -207,104 +210,163 @@
     function parseExcelRows(rows) {
       questionsData = [];
       studentsData = [];
+      qHeaderRowIdx = -1;
+      ansKeyRowIdx = -1;
+      totalScoreColIdx = -1;
+      isNewTotalCol = false;
 
       if (!rows || rows.length === 0) return;
 
-      let qHeaderRowIdx = -1;
-      let ansKeyRowIdx = -1;
       let labelRowIdx = -1;
 
-      for (let i = 0; i < Math.min(rows.length, 10); i++) {
-        const rowStr = rows[i].map(c => String(c)).join(' ');
-        if (qHeaderRowIdx === -1 && (rowStr.includes('Q1') || rowStr.includes('Q2'))) {
+      for (let i = 0; i < Math.min(rows.length, 15); i++) {
+        const cells = rows[i].map(c => String(c).trim());
+        const rowStr = cells.join(' ');
+        if (qHeaderRowIdx === -1 && cells.some(c => /^Q\d+$/i.test(c))) {
           qHeaderRowIdx = i;
         }
-        if (rowStr.includes('ANSWER KEY')) {
+        if (ansKeyRowIdx === -1 && rowStr.toUpperCase().includes('ANSWER KEY')) {
           ansKeyRowIdx = i;
         }
-        if (rowStr.includes('Marks') || rowStr.includes('Answer=')) {
+        if (labelRowIdx === -1 && (cells.some(c => /^(marks?|pts|answer=)$/i.test(c)) || rowStr.includes('Answer='))) {
           labelRowIdx = i;
         }
       }
 
       if (qHeaderRowIdx === -1) qHeaderRowIdx = 0;
 
-      const qRow = rows[qHeaderRowIdx];
+      const startStudentRowIdx = Math.max(qHeaderRowIdx, ansKeyRowIdx, labelRowIdx) + 1;
+      const qRow = rows[qHeaderRowIdx] || [];
       const keyRow = ansKeyRowIdx !== -1 ? rows[ansKeyRowIdx] : null;
       const labelRow = labelRowIdx !== -1 ? rows[labelRowIdx] : null;
 
-      totalScoreColIdx = 4;
-      qRow.forEach((c, idx) => {
-        const str = String(c).trim().toLowerCase();
-        if (str === 'total mcq' || str === 'pts' || str === 'raw' || str.includes('total')) {
-          totalScoreColIdx = idx;
+      let maxHeaderCol = 0;
+      for (let r = 0; r < startStudentRowIdx; r++) {
+        if (rows[r] && rows[r].length > maxHeaderCol) {
+          maxHeaderCol = rows[r].length;
         }
-      });
+      }
 
       const parsedPos = parseFloat(document.getElementById('global-pos').value);
       const parsedNeg = parseFloat(document.getElementById('global-neg').value);
       const defaultPos = cleanFloat(isNaN(parsedPos) ? 1.0 : parsedPos);
       const defaultNeg = cleanFloat(isNaN(parsedNeg) ? -0.25 : parsedNeg);
 
+      // 1. Locate all Question columns
+      const rawQuestions = [];
       qRow.forEach((cellVal, colIdx) => {
         const strVal = String(cellVal).trim();
         if (/^Q\d+$/i.test(strVal)) {
-          
-          let correctOpt = ['A'];
-          if (keyRow && keyRow[colIdx]) {
-            const rawKey = String(keyRow[colIdx]).trim().toUpperCase();
-            correctOpt = rawKey.match(/[A-Z]/g) || ['A']; 
-          }
-
-          let scoreColIdx = colIdx + 1; 
-          if (labelRow && labelRow[colIdx + 5] && String(labelRow[colIdx + 5]).trim().toLowerCase() === 'marks') {
-            scoreColIdx = colIdx + 5;
-          } else if (qRow[colIdx + 1] && String(qRow[colIdx + 1]).trim().toLowerCase().includes('pts')) {
-            scoreColIdx = colIdx + 1;
-          }
-
-          let optionsCount = 4;
-          correctOpt.forEach(c => {
-            let idx = ALPHABET.indexOf(c);
-            if (idx + 1 > optionsCount) optionsCount = idx + 1;
-          });
-
-          let qPos = defaultPos;
-          let qNeg = defaultNeg;
-          let weights = {};
-
-          for (let i = 0; i < optionsCount; i++) {
-            let opt = ALPHABET[i];
-            weights[opt] = cleanFloat(correctOpt.includes(opt) ? qPos : qNeg);
-          }
-
-          questionsData.push({
-            id: strVal.toUpperCase(),
-            colIdx: colIdx,
-            scoreColIdx: scoreColIdx,
-            correct: correctOpt,
-            optionsCount: optionsCount,
-            qPos: qPos,
-            qNeg: qNeg,
-            weights: weights
-          });
+          rawQuestions.push({ id: strVal.toUpperCase(), colIdx });
         }
       });
 
-      const startStudentRowIdx = Math.max(qHeaderRowIdx, ansKeyRowIdx, labelRowIdx) + 1;
+      // 2. Locate Total Score column across all header rows (without colliding with Q columns)
+      const qColSet = new Set(rawQuestions.map(q => q.colIdx));
+      for (let r = 0; r < startStudentRowIdx; r++) {
+        if (!rows[r]) continue;
+        rows[r].forEach((c, idx) => {
+          if (qColSet.has(idx)) return;
+          const str = String(c).trim().toLowerCase();
+          if (
+            str === 'total mcq' ||
+            str === 'total marks' ||
+            str === 'total score' ||
+            str === 'total' ||
+            str === 'grand total' ||
+            str === 'pts' ||
+            str === 'raw' ||
+            (str.includes('total') && !str.includes('unattempt') && !str.includes('correct') && !str.includes('wrong'))
+          ) {
+            if (totalScoreColIdx === -1) totalScoreColIdx = idx;
+          }
+        });
+      }
 
+      let nextAppendCol = maxHeaderCol;
+      if (totalScoreColIdx === -1) {
+        totalScoreColIdx = nextAppendCol++;
+        isNewTotalCol = true;
+      }
+
+      // 3. Build question metadata and find each question's dedicated Marks/Score column
+      rawQuestions.forEach((rq, qIdx) => {
+        const colIdx = rq.colIdx;
+        const nextQColIdx = qIdx + 1 < rawQuestions.length ? rawQuestions[qIdx + 1].colIdx : maxHeaderCol;
+
+        let correctOpt = ['A'];
+        if (keyRow && keyRow[colIdx]) {
+          const rawKey = String(keyRow[colIdx]).trim().toUpperCase();
+          correctOpt = rawKey.match(/[A-Z]/g) || ['A'];
+        }
+
+        // Search columns strictly between this question (colIdx + 1) and the next question (nextQColIdx - 1)
+        let scoreColIdx = -1;
+        let isNewScoreCol = false;
+        for (let c = colIdx + 1; c < nextQColIdx; c++) {
+          if (c === totalScoreColIdx) continue;
+          for (let r = 0; r < startStudentRowIdx; r++) {
+            const cellText = rows[r] && rows[r][c] !== undefined ? String(rows[r][c]).trim().toLowerCase() : '';
+            if (
+              cellText === 'marks' ||
+              cellText === 'mark' ||
+              cellText === 'score' ||
+              cellText === 'pts' ||
+              cellText === 'points' ||
+              cellText.includes('marks') ||
+              cellText.includes('pts')
+            ) {
+              scoreColIdx = c;
+              break;
+            }
+          }
+          if (scoreColIdx !== -1) break;
+        }
+
+        // If the uploaded sheet has no dedicated Marks column for this question, append one safely at the end
+        if (scoreColIdx === -1) {
+          scoreColIdx = nextAppendCol++;
+          isNewScoreCol = true;
+        }
+
+        let optionsCount = 4;
+        correctOpt.forEach(c => {
+          let idx = ALPHABET.indexOf(c);
+          if (idx + 1 > optionsCount) optionsCount = idx + 1;
+        });
+
+        let weights = {};
+        for (let i = 0; i < optionsCount; i++) {
+          let opt = ALPHABET[i];
+          weights[opt] = cleanFloat(correctOpt.includes(opt) ? defaultPos : defaultNeg);
+        }
+
+        questionsData.push({
+          id: rq.id,
+          colIdx: colIdx,
+          scoreColIdx: scoreColIdx,
+          isNewScoreCol: isNewScoreCol,
+          correct: correctOpt,
+          optionsCount: optionsCount,
+          qPos: defaultPos,
+          qNeg: defaultNeg,
+          weights: weights
+        });
+      });
+
+      // 4. Parse student rows
       for (let i = startStudentRowIdx; i < rows.length; i++) {
         const row = rows[i];
         if (!row || row.length === 0) continue;
 
         const firstCell = String(row[0] || '').trim();
-        if (!firstCell || firstCell.includes('ANSWER KEY') || firstCell.includes('Item ID')) continue;
+        if (!firstCell || firstCell.toUpperCase().includes('ANSWER KEY') || firstCell.includes('Item ID')) continue;
 
         let studentId = row[0] || '';
         let lastName = row[1] || '';
         let firstName = row[2] || '';
         let email = row[3] || studentId;
-        let name = `${firstName} ${lastName}`.trim();
+        let name = `${firstName}${lastName}`.trim();
         if (name === '.') name = '';
 
         let answers = {};
@@ -449,140 +511,4 @@
                    onchange="updateQuestionKey(${idx}, 'qPos', this.value)" 
                    class="border border-slate-700 rounded w-16 px-1 py-1 text-center bg-slate-950 text-emerald-400 outline-none"/>
           </td>
-          <td class="p-2.5 text-center bg-rose-950/20 whitespace-nowrap">
-            <input type="number" step="0.01" value="${q.qNeg}" 
-                   onchange="updateQuestionKey(${idx}, 'qNeg', this.value)" 
-                   class="border border-slate-700 rounded w-16 px-1 py-1 text-center bg-slate-950 text-rose-400 outline-none"/>
-          </td>
-          ${optsHTML}
-        `;
-        tbody.appendChild(tr);
-      });
-    }
-
-    function calculateAndRenderPreview() {
-      const unattScore = cleanFloat(parseFloat(document.getElementById('global-unatt').value) || 0);
-      const roundVal = parseFloat(document.getElementById('global-round').value) || 0;
-      const tbody = document.getElementById('student-preview-table');
-      tbody.innerHTML = '';
-
-      studentsData.forEach(student => {
-        let totalScore = 0;
-        let qScoreHTML = '';
-
-        questionsData.forEach(q => {
-          const studentOpts = student.answers[q.id];
-          let score = 0;
-
-          if (!studentOpts || studentOpts.length === 0) {
-            score = unattScore;
-          } else {
-            studentOpts.forEach(opt => {
-              score += (q.weights[opt] !== undefined ? q.weights[opt] : 0);
-            });
-          }
-
-          score = cleanFloat(score);
-          totalScore += score;
-          const isPos = score > 0;
-          const isNeg = score < 0;
-
-          const formattedScoreStr = isPos ? '+' + score.toFixed(2) : score.toFixed(2);
-
-          qScoreHTML += `
-            <td class="p-1.5 text-center font-mono text-xs border-r border-slate-800 min-w-[55px] max-w-[70px] overflow-hidden ${isPos ? 'text-emerald-300 font-semibold bg-emerald-950/50' : isNeg ? 'text-rose-300 bg-rose-950/50' : 'text-slate-500'}">
-              <span class="block text-[10px] text-slate-400 truncate max-w-[60px] mx-auto" title="${studentOpts.join(',') || '-'}">${studentOpts.join(',') || '-'}</span>
-              <span class="block text-xs font-mono font-medium">${formattedScoreStr}</span>
-            </td>
-          `;
-        });
-
-        totalScore = cleanFloat(totalScore);
-
-        if (roundVal > 0) {
-          totalScore = cleanFloat(Math.round(totalScore / roundVal) * roundVal);
-        }
-
-        const tr = document.createElement('tr');
-        tr.className = "hover:bg-slate-800/50 transition-colors";
-        tr.innerHTML = `
-          <td class="p-2.5 font-mono text-slate-400 whitespace-nowrap">${student.email}</td>
-          <td class="p-2.5 font-medium text-slate-200 whitespace-nowrap">${student.name || '-'}</td>
-          <td class="p-2.5 text-right font-bold text-indigo-400 text-sm whitespace-nowrap">${totalScore.toFixed(2)}</td>
-          <td class="p-0">
-            <div class="flex overflow-x-auto">
-              <table class="border-collapse">
-                <tr>${qScoreHTML}</tr>
-              </table>
-            </div>
-          </td>
-        `;
-        tbody.appendChild(tr);
-      });
-    }
-
-    function exportUpdatedExcel() {
-      const unattScore = cleanFloat(parseFloat(document.getElementById('global-unatt').value) || 0);
-      const roundVal = parseFloat(document.getElementById('global-round').value) || 0;
-      let updatedRows = JSON.parse(JSON.stringify(rawRows));
-
-      studentsData.forEach(student => {
-        let rIdx = student.rowIndex;
-        let totalScore = 0;
-
-        questionsData.forEach(q => {
-          const studentOpts = student.answers[q.id];
-          let score = 0;
-          
-          if (!studentOpts || studentOpts.length === 0) {
-            score = unattScore;
-          } else {
-            studentOpts.forEach(opt => {
-              score += (q.weights[opt] !== undefined ? q.weights[opt] : 0);
-            });
-          }
-          
-          score = cleanFloat(score);
-          totalScore += score;
-          if (updatedRows[rIdx]) updatedRows[rIdx][q.scoreColIdx] = score;
-        });
-
-        totalScore = cleanFloat(totalScore);
-
-        if (roundVal > 0) {
-          totalScore = cleanFloat(Math.round(totalScore / roundVal) * roundVal);
-        }
-
-        if (updatedRows[rIdx]) updatedRows[rIdx][totalScoreColIdx] = totalScore;
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(updatedRows);
-      const posStyle = { fill: { fgColor: { rgb: "E6F4EA" } }, font: { color: { rgb: "137333" }, bold: true }, alignment: { horizontal: "center" } };
-      const negStyle = { fill: { fgColor: { rgb: "FCE8E6" } }, font: { color: { rgb: "C5221F" }, bold: true }, alignment: { horizontal: "center" } };
-      const unattStyle = { fill: { fgColor: { rgb: "F1F3F4" } }, font: { color: { rgb: "5F6368" } }, alignment: { horizontal: "center" } };
-      const totalStyle = { fill: { fgColor: { rgb: "E8EAF6" } }, font: { color: { rgb: "1A237E" }, bold: true }, alignment: { horizontal: "right" } };
-
-      studentsData.forEach(student => {
-        let rIdx = student.rowIndex;
-        let totalCellRef = XLSX.utils.encode_cell({ r: rIdx, c: totalScoreColIdx });
-        if (ws[totalCellRef]) ws[totalCellRef].s = totalStyle;
-
-        questionsData.forEach(q => {
-          let scoreCellRef = XLSX.utils.encode_cell({ r: rIdx, c: q.scoreColIdx });
-          if (ws[scoreCellRef]) {
-            let val = parseFloat(ws[scoreCellRef].v);
-            if (!isNaN(val)) {
-              if (val > 0) ws[scoreCellRef].s = posStyle;
-              else if (val < 0) ws[scoreCellRef].s = negStyle;
-              else ws[scoreCellRef].s = unattStyle;
-            }
-          }
-        });
-      });
-
-      rawWorkbook.Sheets[activeSheetName] = ws;
-      XLSX.writeFile(rawWorkbook, `Evaluated_ColorCoded_${activeSheetName}.xlsx`);
-    }
-  </script>
-</body>
-</html>
+          <td class="p-2.5 text-center bg-rose-950/2
