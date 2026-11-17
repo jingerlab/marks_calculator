@@ -241,6 +241,11 @@
         }
       });
 
+      const parsedPos = parseFloat(document.getElementById('global-pos').value);
+      const parsedNeg = parseFloat(document.getElementById('global-neg').value);
+      const defaultPos = cleanFloat(isNaN(parsedPos) ? 1.0 : parsedPos);
+      const defaultNeg = cleanFloat(isNaN(parsedNeg) ? -0.25 : parsedNeg);
+
       qRow.forEach((cellVal, colIdx) => {
         const strVal = String(cellVal).trim();
         if (/^Q\d+$/i.test(strVal)) {
@@ -264,11 +269,11 @@
             if (idx + 1 > optionsCount) optionsCount = idx + 1;
           });
 
-          let qPos = cleanFloat(parseFloat(document.getElementById('global-pos').value) || 1.0);
-          let qNeg = cleanFloat(parseFloat(document.getElementById('global-neg').value) || -0.25);
+          let qPos = defaultPos;
+          let qNeg = defaultNeg;
           let weights = {};
 
-          for(let i=0; i<optionsCount; i++){
+          for (let i = 0; i < optionsCount; i++) {
             let opt = ALPHABET[i];
             weights[opt] = cleanFloat(correctOpt.includes(opt) ? qPos : qNeg);
           }
@@ -326,18 +331,20 @@
 
     function applyBatchRule(type) {
       if (type === 'pos') {
-        const val = cleanFloat(parseFloat(document.getElementById('global-pos').value) || 1.0);
+        const parsed = parseFloat(document.getElementById('global-pos').value);
+        const val = cleanFloat(isNaN(parsed) ? 1.0 : parsed);
         questionsData.forEach(q => {
           q.qPos = val;
           q.correct.forEach(opt => {
-            if(q.weights[opt] !== undefined) q.weights[opt] = val;
+            if (q.weights[opt] !== undefined) q.weights[opt] = val;
           });
         });
       } else if (type === 'neg') {
-        const val = cleanFloat(parseFloat(document.getElementById('global-neg').value) || -0.25);
+        const parsed = parseFloat(document.getElementById('global-neg').value);
+        const val = cleanFloat(isNaN(parsed) ? -0.25 : parsed);
         questionsData.forEach(q => {
           q.qNeg = val;
-          for(let i=0; i<q.optionsCount; i++){
+          for (let i = 0; i < q.optionsCount; i++) {
             let opt = ALPHABET[i];
             if (!q.correct.includes(opt)) q.weights[opt] = val;
           }
@@ -374,9 +381,9 @@
         });
 
         q.weights = {};
-        for(let i=0; i<q.optionsCount; i++) {
-           let opt = ALPHABET[i];
-           q.weights[opt] = cleanFloat(q.correct.includes(opt) ? q.qPos : q.qNeg);
+        for (let i = 0; i < q.optionsCount; i++) {
+          let opt = ALPHABET[i];
+          q.weights[opt] = cleanFloat(q.correct.includes(opt) ? q.qPos : q.qNeg);
         }
       }
 
@@ -390,7 +397,7 @@
       tbody.innerHTML = '';
 
       let maxCount = 2; 
-      questionsData.forEach(q => { if(q.optionsCount > maxCount) maxCount = q.optionsCount; });
+      questionsData.forEach(q => { if (q.optionsCount > maxCount) maxCount = q.optionsCount; });
 
       let headerHTML = `
         <th class="p-2.5 whitespace-nowrap">Q#</th>
@@ -399,7 +406,7 @@
         <th class="p-2.5 text-center bg-emerald-950/60 text-emerald-300 whitespace-nowrap">+ve Mark</th>
         <th class="p-2.5 text-center bg-rose-950/60 text-rose-300 whitespace-nowrap">-ve Mark</th>
       `;
-      for(let i=0; i<maxCount; i++){
+      for (let i = 0; i < maxCount; i++) {
         headerHTML += `<th class="p-2.5 text-center border-l border-slate-700 bg-slate-800/70 min-w-[70px]">Weight ${ALPHABET[i]}</th>`;
       }
       theadTr.innerHTML = headerHTML;
@@ -409,19 +416,19 @@
         tr.className = "hover:bg-slate-800/60 transition-colors";
 
         let optsHTML = '';
-        for(let i=0; i<maxCount; i++){
-            let opt = ALPHABET[i];
-            if (i < q.optionsCount) {
-                optsHTML += `
-                  <td class="p-2 text-center border-l border-slate-800 max-w-[80px]">
-                    <input type="number" step="0.01" value="${q.weights[opt]}" 
-                           onchange="updateQuestionKey(${idx}, 'weight_${opt}', this.value)"
-                           class="w-16 border rounded text-center py-1 font-mono text-xs outline-none ${q.correct.includes(opt) ? 'font-bold bg-emerald-950/60 text-emerald-300 border-emerald-700/70' : 'bg-rose-950/50 text-rose-300 border-rose-800/60'}"/>
-                  </td>
-                `;
-            } else {
-                optsHTML += `<td class="p-2 border-l border-slate-800 bg-slate-950/50"></td>`;
-            }
+        for (let i = 0; i < maxCount; i++) {
+          let opt = ALPHABET[i];
+          if (i < q.optionsCount) {
+            optsHTML += `
+              <td class="p-2 text-center border-l border-slate-800 max-w-[80px]">
+                <input type="number" step="0.01" value="${q.weights[opt]}" 
+                       onchange="updateQuestionKey(${idx}, 'weight_${opt}', this.value)"
+                       class="w-16 border rounded text-center py-1 font-mono text-xs outline-none ${q.correct.includes(opt) ? 'font-bold bg-emerald-950/60 text-emerald-300 border-emerald-700/70' : 'bg-rose-950/50 text-rose-300 border-rose-800/60'}"/>
+              </td>
+            `;
+          } else {
+            optsHTML += `<td class="p-2 border-l border-slate-800 bg-slate-950/50"></td>`;
+          }
         }
 
         tr.innerHTML = `
