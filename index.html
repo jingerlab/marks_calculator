@@ -128,9 +128,15 @@
 
       <!-- Marks Preview Table -->
       <section class="bg-slate-900 p-6 rounded-xl shadow-lg border border-slate-800">
-        <div class="flex justify-between items-center mb-4">
+        <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
           <h2 class="text-lg font-semibold text-slate-100">3. Calculated Marks Preview</h2>
-          <span class="text-xs text-slate-400">Showing <span id="student-count">0</span> Students</span>
+          <div class="flex items-center gap-4">
+            <span class="text-xs text-slate-400">Showing <span id="student-count" class="font-semibold text-slate-200">0</span> Students</span>
+            <button onclick="addStudentRow()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm transition-colors flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+              Add Student Row
+            </button>
+          </div>
         </div>
         <div class="overflow-x-auto border border-slate-800 rounded-lg">
           <table class="w-full text-left text-xs border-collapse min-w-max">
@@ -146,6 +152,12 @@
               <!-- Dynamically populated -->
             </tbody>
           </table>
+        </div>
+        <div class="mt-3 flex justify-start">
+          <button onclick="addStudentRow()" class="bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+            Add Another Student Row
+          </button>
         </div>
       </section>
 
@@ -164,6 +176,14 @@
 
     function cleanFloat(num) {
       return Math.round((num + Number.EPSILON) * 100) / 100;
+    }
+
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
     }
 
     function handleFileUpload(event) {
@@ -329,6 +349,7 @@
 
         studentsData.push({
           rowIndex: i,
+          isCustom: false,
           studentId,
           lastName,
           firstName,
@@ -343,6 +364,157 @@
 
       renderKeySettings();
       calculateAndRenderPreview();
+    }
+
+    function addStudentRow() {
+      const newIndex = studentsData.length + 1;
+      const defaultId = `NEW_${String(newIndex).padStart(3, '0')}`;
+      const newRowIdx = rawRows.length;
+
+      // Create a matching blank row in rawRows so Evaluated Marks sheet export stays aligned
+      const maxCols = rawRows.reduce((max, r) => Math.max(max, r ? r.length : 0), 5);
+      const newRawRow = new Array(maxCols).fill('');
+      newRawRow[0] = defaultId;
+      newRawRow[3] = defaultId;
+      rawRows.push(newRawRow);
+
+      const answers = {};
+      questionsData.forEach(q => {
+        answers[q.id] = [];
+      });
+
+      studentsData.push({
+        rowIndex: newRowIdx,
+        isCustom: true,
+        studentId: defaultId,
+        lastName: '',
+        firstName: '',
+        email: defaultId,
+        name: '',
+        answers
+      });
+
+      document.getElementById('student-count').innerText = studentsData.length;
+      calculateAndRenderPreview();
+
+      // Focus the email/ID input of the newly added bottom row
+      const tbody = document.getElementById('student-preview-table');
+      if (tbody.lastElementChild) {
+        const firstInput = tbody.lastElementChild.querySelector('input');
+        if (firstInput) {
+          firstInput.focus();
+          firstInput.select();
+        }
+      }
+    }
+
+    function removeStudentRow(sIdx) {
+      const removed = studentsData[sIdx];
+      if (!removed) return;
+
+      const removedRawIdx = removed.rowIndex;
+      studentsData.splice(sIdx, 1);
+
+      if (removed.isCustom && removedRawIdx >= 0 && removedRawIdx < rawRows.length) {
+        rawRows.splice(removedRawIdx, 1);
+        studentsData.forEach(s => {
+          if (s.rowIndex > removedRawIdx) s.rowIndex -= 1;
+        });
+      }
+
+      document.getElementById('student-count').innerText = studentsData.length;
+      calculateAndRenderPreview();
+    }
+
+    function updateCustomStudentMeta(sIdx, field, value) {
+      const student = studentsData[sIdx];
+      if (!student) return;
+
+      const trimmed = value.trim();
+      if (field === 'email') {
+        student.email = trimmed;
+        student.studentId = trimmed;
+        if (rawRows[student.rowIndex]) {
+          rawRows[student.rowIndex][0] = trimmed;
+          rawRows[student.rowIndex][3] = trimmed;
+        }
+      } else if (field === 'name') {
+        student.name = trimmed;
+        const parts = trimmed.split(/\s+/).filter(Boolean);
+        student.firstName = parts.length > 0 ? parts[0] : '';
+        student.lastName = parts.length > 1 ? parts.slice(1).join(' ') : '';
+        if (rawRows[student.rowIndex]) {
+          rawRows[student.rowIndex][1] = student.lastName;
+          rawRows[student.rowIndex][2] = student.firstName;
+        }
+      }
+    }
+
+    function updateCustomStudentAnswer(sIdx, qId, rawValue, inputEl) {
+      const student = studentsData[sIdx];
+      if (!student) return;
+
+      const parsedOpts = [...new Set(String(rawValue || '').toUpperCase().match(/[A-Z]/g) || [])];
+      student.answers[qId] = parsedOpts;
+
+      const q = questionsData.find(item => item.id === qId);
+      if (q && rawRows[student.rowIndex]) {
+        rawRows[student.rowIndex][q.colIdx] = parsedOpts.join(',');
+      }
+
+      // Live-update cell score, styling, and row total in place without losing input focus
+      const parsedUnatt = parseFloat(document.getElementById('global-unatt').value);
+      const unattScore = cleanFloat(isNaN(parsedUnatt) ? 0 : parsedUnatt);
+      const roundVal = parseFloat(document.getElementById('global-round').value) || 0;
+
+      if (q && inputEl) {
+        let qScore = 0;
+        if (parsedOpts.length === 0) {
+          qScore = unattScore;
+        } else {
+          parsedOpts.forEach(opt => {
+            qScore += (q.weights[opt] !== undefined ? q.weights[opt] : 0);
+          });
+        }
+        qScore = cleanFloat(qScore);
+
+        const td = inputEl.closest('td');
+        const scoreSpan = td ? td.querySelector('.q-score-val') : null;
+        if (td && scoreSpan) {
+          const isPos = qScore > 0;
+          const isNeg = qScore < 0;
+          scoreSpan.textContent = isPos ? '+' + qScore.toFixed(2) : qScore.toFixed(2);
+          td.className = `p-1.5 text-center font-mono text-xs border-r border-slate-800 min-w-[62px] max-w-[75px] ${
+            isPos ? 'text-emerald-300 font-semibold bg-emerald-950/50'
+            : isNeg ? 'text-rose-300 bg-rose-950/50'
+            : 'text-slate-500'
+          }`;
+        }
+      }
+
+      // Recompute total for this student row
+      let totalScore = 0;
+      questionsData.forEach(item => {
+        const opts = student.answers[item.id] || [];
+        let s = 0;
+        if (opts.length === 0) {
+          s = unattScore;
+        } else {
+          opts.forEach(opt => {
+            s += (item.weights[opt] !== undefined ? item.weights[opt] : 0);
+          });
+        }
+        totalScore += cleanFloat(s);
+      });
+      totalScore = cleanFloat(totalScore);
+      if (roundVal > 0) {
+        totalScore = cleanFloat(Math.round(totalScore / roundVal) * roundVal);
+      }
+
+      const totalEl = document.getElementById(`student-total-${sIdx}`);
+      if (totalEl) {
+        totalEl.textContent = totalScore.toFixed(2);
+      }
     }
 
     function applyBatchRule(type) {
@@ -477,20 +649,21 @@
     }
 
     function calculateAndRenderPreview() {
-      const unattScore = cleanFloat(parseFloat(document.getElementById('global-unatt').value) || 0);
+      const parsedUnatt = parseFloat(document.getElementById('global-unatt').value);
+      const unattScore = cleanFloat(isNaN(parsedUnatt) ? 0 : parsedUnatt);
       const roundVal = parseFloat(document.getElementById('global-round').value) || 0;
       const tbody = document.getElementById('student-preview-table');
       tbody.innerHTML = '';
 
-      studentsData.forEach(student => {
+      studentsData.forEach((student, sIdx) => {
         let totalScore = 0;
         let qScoreHTML = '';
 
         questionsData.forEach(q => {
-          const studentOpts = student.answers[q.id];
+          const studentOpts = student.answers[q.id] || [];
           let score = 0;
 
-          if (!studentOpts || studentOpts.length === 0) {
+          if (studentOpts.length === 0) {
             score = unattScore;
           } else {
             studentOpts.forEach(opt => {
@@ -505,12 +678,27 @@
 
           const formattedScoreStr = isPos ? '+' + score.toFixed(2) : score.toFixed(2);
 
-          qScoreHTML += `
-            <td class="p-1.5 text-center font-mono text-xs border-r border-slate-800 min-w-[55px] max-w-[70px] overflow-hidden ${isPos ? 'text-emerald-300 font-semibold bg-emerald-950/50' : isNeg ? 'text-rose-300 bg-rose-950/50' : 'text-slate-500'}">
-              <span class="block text-[10px] text-slate-400 truncate max-w-[60px] mx-auto" title="${studentOpts.join(',') || '-'}">${studentOpts.join(',') || '-'}</span>
-              <span class="block text-xs font-mono font-medium">${formattedScoreStr}</span>
-            </td>
-          `;
+          if (student.isCustom) {
+            qScoreHTML += `
+              <td class="p-1.5 text-center font-mono text-xs border-r border-slate-800 min-w-[62px] max-w-[75px] ${isPos ? 'text-emerald-300 font-semibold bg-emerald-950/50' : isNeg ? 'text-rose-300 bg-rose-950/50' : 'text-slate-500'}">
+                <input type="text"
+                       value="${escapeHtml(studentOpts.join(','))}"
+                       placeholder="-"
+                       title="${q.id} Answer (e.g. A or A,C)"
+                       oninput="updateCustomStudentAnswer(${sIdx}, '${q.id}', this.value, this)"
+                       onchange="this.value = studentsData[${sIdx}].answers['${q.id}'].join(',')"
+                       class="w-12 bg-slate-950/90 border border-slate-700 focus:border-indigo-400 rounded text-center text-[10px] text-slate-200 uppercase py-0.5 mb-0.5 outline-none"/>
+                <span class="q-score-val block text-xs font-mono font-medium">${formattedScoreStr}</span>
+              </td>
+            `;
+          } else {
+            qScoreHTML += `
+              <td class="p-1.5 text-center font-mono text-xs border-r border-slate-800 min-w-[55px] max-w-[70px] overflow-hidden ${isPos ? 'text-emerald-300 font-semibold bg-emerald-950/50' : isNeg ? 'text-rose-300 bg-rose-950/50' : 'text-slate-500'}">
+                <span class="block text-[10px] text-slate-400 truncate max-w-[60px] mx-auto" title="${studentOpts.join(',') || '-'}">${studentOpts.join(',') || '-'}</span>
+                <span class="block text-xs font-mono font-medium">${formattedScoreStr}</span>
+              </td>
+            `;
+          }
         });
 
         totalScore = cleanFloat(totalScore);
@@ -520,28 +708,64 @@
         }
 
         const tr = document.createElement('tr');
-        tr.className = "hover:bg-slate-800/50 transition-colors";
-        tr.innerHTML = `
-          <td class="p-2.5 font-mono text-slate-400 whitespace-nowrap">${student.email}</td>
-          <td class="p-2.5 font-medium text-slate-200 whitespace-nowrap">${student.name || '-'}</td>
-          <td class="p-2.5 text-right font-bold text-indigo-400 text-sm whitespace-nowrap">${totalScore.toFixed(2)}</td>
-          <td class="p-0">
-            <div class="flex overflow-x-auto">
-              <table class="border-collapse">
-                <tr>${qScoreHTML}</tr>
-              </table>
-            </div>
-          </td>
-        `;
+        tr.className = student.isCustom
+          ? "bg-indigo-950/20 hover:bg-indigo-950/35 transition-colors"
+          : "hover:bg-slate-800/50 transition-colors";
+
+        if (student.isCustom) {
+          tr.innerHTML = `
+            <td class="p-2 font-mono text-slate-300 whitespace-nowrap">
+              <input type="text"
+                     value="${escapeHtml(student.email)}"
+                     placeholder="ID / Email"
+                     oninput="updateCustomStudentMeta(${sIdx}, 'email', this.value)"
+                     class="w-40 bg-slate-950 border border-slate-700 focus:border-indigo-400 rounded px-2 py-1 text-xs text-slate-200 outline-none"/>
+            </td>
+            <td class="p-2 font-medium text-slate-200 whitespace-nowrap">
+              <input type="text"
+                     value="${escapeHtml(student.name)}"
+                     placeholder="Student Name"
+                     oninput="updateCustomStudentMeta(${sIdx}, 'name', this.value)"
+                     class="w-36 bg-slate-950 border border-slate-700 focus:border-indigo-400 rounded px-2 py-1 text-xs text-slate-200 outline-none"/>
+            </td>
+            <td class="p-2.5 text-right font-bold text-indigo-400 text-sm whitespace-nowrap">
+              <div class="flex items-center justify-end gap-2">
+                <span id="student-total-${sIdx}">${totalScore.toFixed(2)}</span>
+                <button onclick="removeStudentRow(${sIdx})" title="Remove added row" class="text-slate-500 hover:text-rose-400 text-xs px-1 transition-colors">✕</button>
+              </div>
+            </td>
+            <td class="p-0">
+              <div class="flex overflow-x-auto">
+                <table class="border-collapse">
+                  <tr>${qScoreHTML}</tr>
+                </table>
+              </div>
+            </td>
+          `;
+        } else {
+          tr.innerHTML = `
+            <td class="p-2.5 font-mono text-slate-400 whitespace-nowrap">${escapeHtml(student.email)}</td>
+            <td class="p-2.5 font-medium text-slate-200 whitespace-nowrap">${escapeHtml(student.name) || '-'}</td>
+            <td class="p-2.5 text-right font-bold text-indigo-400 text-sm whitespace-nowrap">${totalScore.toFixed(2)}</td>
+            <td class="p-0">
+              <div class="flex overflow-x-auto">
+                <table class="border-collapse">
+                  <tr>${qScoreHTML}</tr>
+                </table>
+              </div>
+            </td>
+          `;
+        }
         tbody.appendChild(tr);
       });
     }
 
     function generateTemplateFormattedSheet() {
-      const unattScore = cleanFloat(parseFloat(document.getElementById('global-unatt').value) || 0);
+      const parsedUnatt = parseFloat(document.getElementById('global-unatt').value);
+      const unattScore = cleanFloat(isNaN(parsedUnatt) ? 0 : parsedUnatt);
 
       let maxOpts = 4;
-      questionsData.forEach(q => { if(q.optionsCount > maxOpts) maxOpts = q.optionsCount; });
+      questionsData.forEach(q => { if (q.optionsCount > maxOpts) maxOpts = q.optionsCount; });
 
       let row1 = ['StudentID', 'Last Name', 'First Name', 'Email', 'Total MCQ'];
       let row2 = ['ANSWER KEY -->', '', '', '', ''];
@@ -597,7 +821,8 @@
       });
 
       let templateRows = [row1, row2, row3];
-      let maxTotalPossible = questionsData.length * (questionsData[0]?.qPos || 1);
+      const basePos = isNaN(questionsData[0]?.qPos) ? 1 : questionsData[0].qPos;
+      let maxTotalPossible = cleanFloat(questionsData.length * basePos);
       row3[4] = `Total MCQ Marks = ${maxTotalPossible}`;
 
       let studentRowInfo = [];
@@ -667,7 +892,8 @@
     }
 
     function exportUpdatedExcel() {
-      const unattScore = cleanFloat(parseFloat(document.getElementById('global-unatt').value) || 0);
+      const parsedUnatt = parseFloat(document.getElementById('global-unatt').value);
+      const unattScore = cleanFloat(isNaN(parsedUnatt) ? 0 : parsedUnatt);
 
       const posStyle = { fill: { fgColor: { rgb: "E6F4EA" } }, font: { color: { rgb: "137333" }, bold: true }, alignment: { horizontal: "center" } };
       const negStyle = { fill: { fgColor: { rgb: "FCE8E6" } }, font: { color: { rgb: "C5221F" }, bold: true }, alignment: { horizontal: "center" } };
@@ -729,9 +955,9 @@
         let scoreCellRefs = [];
 
         questionsData.forEach(q => {
-          const studentOpts = student.answers[q.id];
+          const studentOpts = student.answers[q.id] || [];
           let score = 0;
-          if (!studentOpts || studentOpts.length === 0) score = unattScore;
+          if (studentOpts.length === 0) score = unattScore;
           else studentOpts.forEach(opt => score += (q.weights[opt] !== undefined ? q.weights[opt] : 0));
 
           score = cleanFloat(score);
